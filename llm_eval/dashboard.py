@@ -1,11 +1,12 @@
 """Streamlit dashboard for LLM Eval trace viewing and annotation.
 
-Run with: streamlit run llm_eval/dashboard.py -- --db-path traces.db
+Run with: streamlit run llm_eval/dashboard.py
+Set database: LLM_EVAL_DB_PATH=path/to/db.db
 
 Pages:
 1. Session Explorer - Browse sessions, view traces, annotate
 2. Version Comparison - Compare prompt versions side-by-side
-3. Failure Analysis - LLM-powered clustering of failures
+3. Failure Analysis - Clustering of failures
 """
 
 import json
@@ -13,28 +14,47 @@ import streamlit as st
 from datetime import datetime, timedelta
 from pathlib import Path
 
-# Add parent to path for imports when running directly
 import sys
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from llm_eval.store import TraceStore
 from llm_eval.models import Annotation
 
+# Compact CSS
+COMPACT_CSS = """
+<style>
+    .block-container {padding-top: 1rem; padding-bottom: 0rem;}
+    h1 {font-size: 1.5rem !important; margin-bottom: 0.5rem !important;}
+    h2 {font-size: 1.2rem !important; margin-bottom: 0.3rem !important;}
+    h3 {font-size: 1rem !important; margin-bottom: 0.2rem !important;}
+    .stMetric {padding: 0.2rem 0 !important;}
+    .stMetric label {font-size: 0.75rem !important;}
+    .stMetric [data-testid="stMetricValue"] {font-size: 1rem !important;}
+    div[data-testid="stExpander"] {margin-bottom: 0.3rem !important;}
+    .stRadio > div {gap: 0.3rem !important;}
+    .stTextInput > div > div > input {padding: 0.3rem 0.5rem !important;}
+    .stButton > button {padding: 0.2rem 0.8rem !important; font-size: 0.8rem !important;}
+    .trace-card {border: 1px solid #e0e0e0; border-radius: 6px; padding: 10px; margin-bottom: 12px; background: #fafafa;}
+    .msg-system {background: #e3f2fd; padding: 6px 10px; border-radius: 4px; font-size: 0.85rem; margin: 2px 0;}
+    .msg-user {background: #fff3e0; padding: 6px 10px; border-radius: 4px; font-size: 0.85rem; margin: 2px 0;}
+    .msg-assistant {background: #e8f5e9; padding: 6px 10px; border-radius: 4px; font-size: 0.85rem; margin: 2px 0;}
+    .metrics-row {display: flex; gap: 8px; font-size: 0.75rem; color: #666; margin: 4px 0;}
+    .metrics-row span {background: #f5f5f5; padding: 2px 6px; border-radius: 3px;}
+    hr {margin: 6px 0 !important;}
+</style>
+"""
+
 
 def get_store() -> TraceStore:
     """Get or create the TraceStore instance."""
-    # Check for command line argument or environment variable
     import os
-
     db_path = os.environ.get("LLM_EVAL_DB_PATH", "traces.db")
 
-    # Also check command line args
     if len(sys.argv) > 1:
         for i, arg in enumerate(sys.argv):
             if arg == "--db-path" and i + 1 < len(sys.argv):
                 db_path = sys.argv[i + 1]
                 break
-            # Also support --db-path=value format
             if arg.startswith("--db-path="):
                 db_path = arg.split("=", 1)[1]
                 break
@@ -45,355 +65,152 @@ def get_store() -> TraceStore:
     return st.session_state.store
 
 
-def format_messages(messages: list) -> str:
-    """Format messages for display."""
-    if not messages:
-        return "No messages"
+def render_message(role: str, content: str):
+    """Render a message with role-based styling."""
+    if isinstance(content, list):
+        content = " ".join(item.get("text", str(item)) for item in content if isinstance(item, dict))
 
-    formatted = []
-    for msg in messages:
-        role = msg.get("role", "unknown")
-        content = msg.get("content", "")
-        if isinstance(content, list):
-            # Handle multimodal content
-            content = " ".join(
-                item.get("text", str(item))
-                for item in content
-                if isinstance(item, dict)
-            )
-        formatted.append(f"**{role.upper()}**: {content}")
-    return "\n\n".join(formatted)
+    css_class = f"msg-{role.lower()}"
+    st.markdown(f'<div class="{css_class}"><b>{role}:</b> {content}</div>', unsafe_allow_html=True)
 
 
 # =============================================================================
 # Page 1: Session Explorer
 # =============================================================================
 def page_session_explorer():
-    """Main page - Session browser with trace viewer and annotation."""
-    st.title("Session Explorer")
-
+    st.markdown("## Session Explorer")
     store = get_store()
-
-    # Get all sessions
     sessions = store.get_sessions()
 
     if not sessions:
-        st.info("No sessions found. Run some traced LLM calls first.")
+        st.info("No sessions found.")
         return
 
-    # Three-column layout
-    col_left, col_middle, col_right = st.columns([1, 2, 1])
+    col_left, col_middle, col_right = st.columns([1, 2.5, 1])
 
-    # === LEFT PANEL: Filters & Session List ===
+    # === LEFT: Filters & Sessions ===
     with col_left:
-        st.subheader("Filters")
-
-        # Get unique projects
         projects = list(set(s["project"] for s in sessions))
-        selected_project = st.selectbox(
-            "Project",
-            ["All"] + projects,
-            key="filter_project"
-        )
+        selected_project = st.selectbox("Project", ["All"] + projects, key="filter_project")
 
-        # Get unique prompt names from traces
         all_traces = store.get_traces({})
         prompt_names = list(set(t["prompt_name"] for t in all_traces))
-        selected_prompt = st.selectbox(
-            "Prompt",
-            ["All"] + prompt_names,
-            key="filter_prompt"
-        )
+        selected_prompt = st.selectbox("Prompt", ["All"] + prompt_names, key="filter_prompt")
 
-        # Date range
-        col_d1, col_d2 = st.columns(2)
-        with col_d1:
-            start_date = st.date_input(
-                "From",
-                value=datetime.now() - timedelta(days=7),
-                key="filter_start"
-            )
-        with col_d2:
-            end_date = st.date_input(
-                "To",
-                value=datetime.now(),
-                key="filter_end"
-            )
-
-        # Annotation status filter
-        annotation_filter = st.selectbox(
-            "Annotation Status",
-            ["All", "Unannotated", "Good", "Bad"],
-            key="filter_annotation"
-        )
-
-        st.divider()
-        st.subheader("Sessions")
-
-        # Filter sessions
+        st.markdown("**Sessions**")
         filtered_sessions = sessions
         if selected_project != "All":
             filtered_sessions = [s for s in filtered_sessions if s["project"] == selected_project]
 
-        # Display session list
-        for i, session in enumerate(filtered_sessions[:20]):  # Limit to 20
+        for i, session in enumerate(filtered_sessions[:15]):
             session_id = session["session_id"]
-            display_name = session_id[:20] + "..." if len(session_id) > 20 else session_id
-
-            # Show session stats
-            label = f"{display_name}\n{session['trace_count']} traces | {session['total_tokens'] or 0} tok"
-
-            if st.button(label, key=f"session_{i}", use_container_width=True):
+            display = session_id[:18] + ".." if len(session_id) > 20 else session_id
+            label = f"{display} ({session['trace_count']})"
+            if st.button(label, key=f"sess_{i}", use_container_width=True):
                 st.session_state.selected_session = session_id
 
-    # === MIDDLE PANEL: Conversation Thread ===
+    # === MIDDLE: Traces ===
     with col_middle:
-        st.subheader("Conversation Thread")
-
         selected_session = st.session_state.get("selected_session")
-
         if not selected_session:
-            st.info("Select a session from the left panel")
+            st.info("Select a session")
             return
 
-        # Get traces for selected session
         traces = store.get_traces({"session_id": selected_session})
-
         if not traces:
-            st.warning("No traces in this session")
+            st.warning("No traces")
             return
 
-        # Sort by created_at
         traces.sort(key=lambda x: x["created_at"])
+        st.markdown(f"**{len(traces)} traces** in `{selected_session[:25]}..`")
 
-        # Display each trace as a card
         for i, trace in enumerate(traces):
-            # Card container with border styling
-            st.markdown(f"""
-            <div style="border: 1px solid #ddd; border-radius: 10px; padding: 15px; margin-bottom: 25px; background-color: #fafafa;">
-            """, unsafe_allow_html=True)
-
-            # Card header with status and metrics
-            status_icon = "✅" if trace["status"] == "success" else "❌"
             annotation = store.get_annotation(trace["id"])
-            ann_badge = ""
+            status = "OK" if trace["status"] == "success" else "ERR"
+            ann_status = ""
             if annotation:
-                ann_badge = "🟢 Good" if annotation["rating"] == "good" else "🔴 Bad"
+                ann_status = " [GOOD]" if annotation["rating"] == "good" else " [BAD]"
 
-            col_h1, col_h2 = st.columns([3, 1])
-            with col_h1:
-                st.markdown(f"### {status_icon} Trace {i+1}: {trace['prompt_name']} v{trace['prompt_version']}")
-            with col_h2:
-                if ann_badge:
-                    st.markdown(f"**{ann_badge}**")
+            # Metrics line
+            metrics = f"in:{trace.get('input_tokens',0)} out:{trace.get('output_tokens',0)} | {trace.get('latency_ms',0)}ms | {trace.get('model_name','')[:20]}"
 
-            # Metrics row
-            col_m1, col_m2, col_m3, col_m4, col_m5 = st.columns(5)
-            with col_m1:
-                st.metric("Input Tokens", trace.get("input_tokens", 0))
-            with col_m2:
-                st.metric("Output Tokens", trace.get("output_tokens", 0))
-            with col_m3:
-                st.metric("Total Tokens", trace.get("total_tokens", 0))
-            with col_m4:
-                st.metric("Latency", f"{trace.get('latency_ms', 0)}ms")
-            with col_m5:
-                st.metric("Model", trace.get("model_name", "N/A")[:15])
+            st.markdown(f"""<div class="trace-card">
+                <b>#{i+1} {trace['prompt_name']} v{trace['prompt_version']}</b> [{status}]{ann_status}
+                <div class="metrics-row"><span>{metrics}</span></div>
+            </div>""", unsafe_allow_html=True)
 
-            st.markdown("---")
+            # Input messages
+            with st.expander(f"Input ({len(trace.get('input_messages', []))} msgs)", expanded=True):
+                for msg in trace.get("input_messages", []):
+                    render_message(msg.get("role", "unknown"), msg.get("content", ""))
 
-            # Input messages (shown by default)
-            st.markdown("##### 📥 Input Messages")
-            input_msgs = trace.get("input_messages", [])
-            for msg in input_msgs:
-                role = msg.get("role", "unknown").upper()
-                content = msg.get("content", "")
-                if isinstance(content, list):
-                    content = " ".join(
-                        item.get("text", str(item))
-                        for item in content
-                        if isinstance(item, dict)
-                    )
-
-                # Color code by role
-                if role == "SYSTEM":
-                    st.info(f"**{role}**: {content}")
-                elif role == "USER":
-                    st.chat_message("user").markdown(content)
-                elif role == "ASSISTANT":
-                    st.chat_message("assistant").markdown(content)
+            # Output
+            with st.expander("Output", expanded=True):
+                if trace["status"] == "error":
+                    st.error(trace.get("error", "Error"))
                 else:
-                    st.markdown(f"**{role}**: {content}")
+                    st.markdown(trace.get("output_content", ""))
+
+            # Annotation
+            col_r, col_n, col_c, col_s = st.columns([1, 2, 1.5, 0.8])
+            with col_r:
+                current = annotation["rating"] if annotation else None
+                opts = ["good", "bad"]
+                idx = opts.index(current) if current in opts else None
+                rating = st.radio("Rate", opts, index=idx, key=f"r_{trace['id']}", horizontal=True, label_visibility="collapsed")
+            with col_n:
+                notes = st.text_input("Notes", value=annotation["notes"] if annotation else "", key=f"n_{trace['id']}", label_visibility="collapsed", placeholder="Notes...")
+            with col_c:
+                cat = ""
+                if rating == "bad":
+                    cat = st.text_input("Category", value=annotation["failure_category"] if annotation else "", key=f"c_{trace['id']}", label_visibility="collapsed", placeholder="Failure type")
+            with col_s:
+                if st.button("Save", key=f"s_{trace['id']}"):
+                    if rating:
+                        store.save_annotation(Annotation(trace_id=trace["id"], rating=rating, notes=notes, failure_category=cat, annotator="user").model_dump())
+                        st.rerun()
 
             st.markdown("---")
 
-            # Output (shown by default)
-            st.markdown("##### 📤 Output")
-            if trace["status"] == "error":
-                st.error(f"**Error:** {trace.get('error', 'Unknown error')}")
-            else:
-                st.chat_message("assistant").markdown(trace.get("output_content", "No output"))
-
-            # Additional metadata
-            with st.expander("📋 Additional Details", expanded=False):
-                col_d1, col_d2 = st.columns(2)
-                with col_d1:
-                    st.text(f"Trace ID: {trace['id']}")
-                    st.text(f"Created: {trace.get('created_at', 'N/A')}")
-                    st.text(f"Session: {trace.get('session_id', 'N/A')[:20]}...")
-                with col_d2:
-                    st.text(f"Project: {trace.get('project', 'N/A')}")
-                    st.text(f"Status: {trace.get('status', 'N/A')}")
-                    metadata = trace.get("metadata", {})
-                    if metadata:
-                        st.text(f"Metadata: {metadata}")
-
-            st.markdown("---")
-
-            # Annotation form
-            st.markdown("##### ✏️ Annotation")
-
-            col_a1, col_a2, col_a3 = st.columns([1, 2, 1])
-            with col_a1:
-                current_rating = annotation["rating"] if annotation else None
-                rating_options = ["good", "bad"]
-                rating_index = rating_options.index(current_rating) if current_rating in rating_options else None
-
-                new_rating = st.radio(
-                    "Rating",
-                    rating_options,
-                    index=rating_index,
-                    key=f"rating_{trace['id']}",
-                    horizontal=True
-                )
-
-            with col_a2:
-                current_notes = annotation["notes"] if annotation else ""
-                new_notes = st.text_input(
-                    "Notes",
-                    value=current_notes,
-                    key=f"notes_{trace['id']}",
-                    placeholder="Add notes about this output..."
-                )
-
-            with col_a3:
-                # Failure category (only show if rating is bad)
-                current_category = annotation["failure_category"] if annotation else ""
-                if new_rating == "bad":
-                    new_category = st.text_input(
-                        "Failure Category",
-                        value=current_category,
-                        key=f"category_{trace['id']}",
-                        placeholder="e.g., hallucination"
-                    )
-                else:
-                    new_category = ""
-
-            # Save button
-            if st.button("💾 Save Annotation", key=f"save_{trace['id']}", type="primary"):
-                if new_rating:
-                    ann = Annotation(
-                        trace_id=trace["id"],
-                        rating=new_rating,
-                        notes=new_notes,
-                        failure_category=new_category,
-                        annotator="dashboard_user"
-                    )
-                    store.save_annotation(ann.model_dump())
-                    st.success("Annotation saved!")
-                    st.rerun()
-
-            st.markdown("</div>", unsafe_allow_html=True)
-
-            # Space between traces
-            st.markdown("<br>", unsafe_allow_html=True)
-
-    # === RIGHT PANEL: Metrics ===
+    # === RIGHT: Metrics ===
     with col_right:
-        st.subheader("📊 Session Metrics")
-
-        if selected_session:
-            # Session summary
+        if selected_session and traces:
             session_data = next((s for s in sessions if s["session_id"] == selected_session), None)
             if session_data:
-                st.metric("Total Traces", session_data["trace_count"])
-                st.metric("Total Tokens", session_data["total_tokens"] or 0)
+                c1, c2 = st.columns(2)
+                c1.metric("Traces", session_data["trace_count"])
+                c2.metric("Tokens", session_data["total_tokens"] or 0)
+                c1.metric("OK", session_data["success_count"])
+                c2.metric("Err", session_data["error_count"])
 
-                col_s1, col_s2 = st.columns(2)
-                with col_s1:
-                    st.metric("Success", session_data["success_count"], delta_color="normal")
-                with col_s2:
-                    st.metric("Errors", session_data["error_count"], delta_color="inverse")
+            total_in = sum(t.get("input_tokens", 0) for t in traces)
+            total_out = sum(t.get("output_tokens", 0) for t in traces)
+            avg_lat = sum(t.get("latency_ms", 0) for t in traces) / len(traces)
 
-            st.divider()
+            st.markdown("---")
+            c1, c2 = st.columns(2)
+            c1.metric("In tok", total_in)
+            c2.metric("Out tok", total_out)
+            st.metric("Avg latency", f"{avg_lat:.0f}ms")
 
-            # Calculate more metrics from traces
-            if traces:
-                total_input = sum(t.get("input_tokens", 0) for t in traces)
-                total_output = sum(t.get("output_tokens", 0) for t in traces)
-                total_latency = sum(t.get("latency_ms", 0) for t in traces)
-                avg_latency = total_latency / len(traces) if traces else 0
+            good = sum(1 for t in traces if store.get_annotation(t["id"]) and store.get_annotation(t["id"])["rating"] == "good")
+            bad = sum(1 for t in traces if store.get_annotation(t["id"]) and store.get_annotation(t["id"])["rating"] == "bad")
 
-                st.markdown("##### Token Breakdown")
-                st.metric("Input Tokens", f"{total_input:,}")
-                st.metric("Output Tokens", f"{total_output:,}")
-
-                st.divider()
-
-                st.markdown("##### Performance")
-                st.metric("Avg Latency", f"{avg_latency:.0f}ms")
-                st.metric("Total Time", f"{total_latency/1000:.1f}s")
-
-                st.divider()
-
-                # Annotation stats
-                st.markdown("##### Annotations")
-                good_count = sum(1 for t in traces if store.get_annotation(t["id"]) and store.get_annotation(t["id"])["rating"] == "good")
-                bad_count = sum(1 for t in traces if store.get_annotation(t["id"]) and store.get_annotation(t["id"])["rating"] == "bad")
-                unannotated = len(traces) - good_count - bad_count
-
-                col_a1, col_a2 = st.columns(2)
-                with col_a1:
-                    st.metric("Good", good_count)
-                with col_a2:
-                    st.metric("Bad", bad_count)
-
-                st.metric("Unannotated", unannotated)
-
-                if good_count + bad_count > 0:
-                    pass_rate = good_count / (good_count + bad_count) * 100
-                    st.metric("Pass Rate", f"{pass_rate:.0f}%")
-
-                st.divider()
-
-                # Models used
-                st.markdown("##### Models Used")
-                models = set(t.get("model_name", "Unknown") for t in traces)
-                for model in models:
-                    if model:
-                        count = sum(1 for t in traces if t.get("model_name") == model)
-                        st.text(f"{model}: {count}")
-
-                st.divider()
-
-                # Prompt versions used
-                st.markdown("##### Prompt Versions")
-                prompts = set((t.get("prompt_name"), t.get("prompt_version")) for t in traces)
-                for name, version in sorted(prompts):
-                    count = sum(1 for t in traces if t.get("prompt_name") == name and t.get("prompt_version") == version)
-                    st.text(f"{name} v{version}: {count}")
+            st.markdown("---")
+            c1, c2 = st.columns(2)
+            c1.metric("Good", good)
+            c2.metric("Bad", bad)
+            if good + bad > 0:
+                st.metric("Pass%", f"{good/(good+bad)*100:.0f}%")
 
 
 # =============================================================================
 # Page 2: Version Comparison
 # =============================================================================
 def page_version_comparison():
-    """Compare two prompt versions side by side."""
-    st.title("Version Comparison")
-
+    st.markdown("## Version Comparison")
     store = get_store()
 
-    # Get all unique prompt names
     all_traces = store.get_traces({})
     prompt_names = list(set(t["prompt_name"] for t in all_traces))
 
@@ -401,225 +218,116 @@ def page_version_comparison():
         st.info("No prompts found.")
         return
 
-    # Select prompt
-    selected_prompt = st.selectbox("Select Prompt", prompt_names)
-
+    selected_prompt = st.selectbox("Prompt", prompt_names)
     if not selected_prompt:
         return
 
-    # Get versions for this prompt
     versions = store.list_prompt_versions(selected_prompt)
-
     if len(versions) < 2:
-        st.info(f"Only {len(versions)} version(s) found. Need at least 2 for comparison.")
+        st.info(f"Need at least 2 versions (found {len(versions)})")
         return
 
-    # Select two versions
     col1, col2 = st.columns(2)
-
     with col1:
-        v1_options = [f"v{v['version']}: {v.get('description', '')[:30]}" for v in versions]
-        v1_idx = st.selectbox("Version A", range(len(v1_options)), format_func=lambda x: v1_options[x])
-        version_a = versions[v1_idx]
-
+        opts_a = [f"v{v['version']}: {v.get('description', '')[:25]}" for v in versions]
+        idx_a = st.selectbox("Version A", range(len(opts_a)), format_func=lambda x: opts_a[x])
+        ver_a = versions[idx_a]
     with col2:
-        v2_options = [f"v{v['version']}: {v.get('description', '')[:30]}" for v in versions]
-        v2_idx = st.selectbox("Version B", range(len(v2_options)), format_func=lambda x: v2_options[x], index=min(1, len(versions)-1))
-        version_b = versions[v2_idx]
-
-    st.divider()
-
-    # Side by side comparison
-    col1, col2 = st.columns(2)
-
-    with col1:
-        st.subheader(f"Version {version_a['version']}")
-        st.caption(version_a.get("description", "No description"))
-        st.text_area("Template", version_a["template"], height=200, disabled=True, key="template_a")
-
-        # Get traces for this version
-        traces_a = [t for t in all_traces if t["prompt_name"] == selected_prompt and t["prompt_version"] == version_a["version"]]
-
-        # Calculate stats
-        good_count = sum(1 for t in traces_a if store.get_annotation(t["id"]) and store.get_annotation(t["id"])["rating"] == "good")
-        bad_count = sum(1 for t in traces_a if store.get_annotation(t["id"]) and store.get_annotation(t["id"])["rating"] == "bad")
-        total_annotated = good_count + bad_count
-
-        st.metric("Traces", len(traces_a))
-        if total_annotated > 0:
-            pass_rate = good_count / total_annotated * 100
-            st.metric("Pass Rate", f"{pass_rate:.1f}%")
-        else:
-            st.metric("Pass Rate", "N/A")
-
-    with col2:
-        st.subheader(f"Version {version_b['version']}")
-        st.caption(version_b.get("description", "No description"))
-        st.text_area("Template", version_b["template"], height=200, disabled=True, key="template_b")
-
-        # Get traces for this version
-        traces_b = [t for t in all_traces if t["prompt_name"] == selected_prompt and t["prompt_version"] == version_b["version"]]
-
-        # Calculate stats
-        good_count = sum(1 for t in traces_b if store.get_annotation(t["id"]) and store.get_annotation(t["id"])["rating"] == "good")
-        bad_count = sum(1 for t in traces_b if store.get_annotation(t["id"]) and store.get_annotation(t["id"])["rating"] == "bad")
-        total_annotated = good_count + bad_count
-
-        st.metric("Traces", len(traces_b))
-        if total_annotated > 0:
-            pass_rate = good_count / total_annotated * 100
-            st.metric("Pass Rate", f"{pass_rate:.1f}%")
-        else:
-            st.metric("Pass Rate", "N/A")
-
-    # Sample outputs
-    st.divider()
-    st.subheader("Sample Outputs")
+        opts_b = [f"v{v['version']}: {v.get('description', '')[:25]}" for v in versions]
+        idx_b = st.selectbox("Version B", range(len(opts_b)), format_func=lambda x: opts_b[x], index=min(1, len(versions)-1))
+        ver_b = versions[idx_b]
 
     col1, col2 = st.columns(2)
 
-    with col1:
-        st.caption(f"Version {version_a['version']} samples")
-        for trace in traces_a[:3]:
-            with st.expander(f"Trace {trace['id'][:8]}..."):
-                st.markdown(trace.get("output_content", "No output")[:500])
+    for col, ver in [(col1, ver_a), (col2, ver_b)]:
+        with col:
+            st.markdown(f"**v{ver['version']}**: {ver.get('description', '')[:40]}")
+            st.text_area("Template", ver["template"], height=120, disabled=True, key=f"t_{ver['version']}")
 
-    with col2:
-        st.caption(f"Version {version_b['version']} samples")
-        for trace in traces_b[:3]:
-            with st.expander(f"Trace {trace['id'][:8]}..."):
-                st.markdown(trace.get("output_content", "No output")[:500])
+            traces = [t for t in all_traces if t["prompt_name"] == selected_prompt and t["prompt_version"] == ver["version"]]
+            good = sum(1 for t in traces if store.get_annotation(t["id"]) and store.get_annotation(t["id"])["rating"] == "good")
+            bad = sum(1 for t in traces if store.get_annotation(t["id"]) and store.get_annotation(t["id"])["rating"] == "bad")
+
+            c1, c2 = st.columns(2)
+            c1.metric("Traces", len(traces))
+            c2.metric("Pass%", f"{good/(good+bad)*100:.0f}%" if good+bad > 0 else "N/A")
 
 
 # =============================================================================
 # Page 3: Failure Analysis
 # =============================================================================
 def page_failure_analysis():
-    """LLM-powered clustering of failures."""
-    st.title("Failure Analysis")
-
+    st.markdown("## Failure Analysis")
     store = get_store()
 
-    # Filters
-    col1, col2, col3 = st.columns(3)
-
+    col1, col2 = st.columns(2)
     with col1:
         all_traces = store.get_traces({})
         prompt_names = list(set(t["prompt_name"] for t in all_traces))
         selected_prompt = st.selectbox("Prompt", ["All"] + prompt_names, key="fa_prompt")
-
     with col2:
-        days_back = st.number_input("Days back", min_value=1, max_value=365, value=30)
+        days_back = st.number_input("Days", min_value=1, max_value=365, value=30)
 
-    with col3:
-        min_failures = st.number_input("Min failures to analyze", min_value=1, max_value=100, value=5)
-
-    # Get failed traces with annotations
     filters = {}
     if selected_prompt != "All":
         filters["prompt_name"] = selected_prompt
     filters["start_date"] = datetime.now() - timedelta(days=days_back)
 
     traces = store.get_traces(filters)
-
-    # Filter to only bad-rated traces
     bad_traces = []
     for trace in traces:
-        annotation = store.get_annotation(trace["id"])
-        if annotation and annotation["rating"] == "bad":
-            trace["annotation"] = annotation
+        ann = store.get_annotation(trace["id"])
+        if ann and ann["rating"] == "bad":
+            trace["annotation"] = ann
             bad_traces.append(trace)
 
-    st.metric("Total Failures Found", len(bad_traces))
+    st.metric("Failures", len(bad_traces))
 
-    if len(bad_traces) < min_failures:
-        st.warning(f"Not enough failures ({len(bad_traces)}) to analyze. Need at least {min_failures}.")
+    if not bad_traces:
+        st.info("No failures found")
         return
-
-    st.divider()
-
-    # Manual category summary (from existing annotations)
-    st.subheader("Failure Categories (from annotations)")
 
     categories = {}
     for trace in bad_traces:
         cat = trace["annotation"].get("failure_category", "Uncategorized") or "Uncategorized"
-        if cat not in categories:
-            categories[cat] = []
-        categories[cat].append(trace)
+        categories.setdefault(cat, []).append(trace)
 
     for cat, cat_traces in sorted(categories.items(), key=lambda x: -len(x[1])):
         pct = len(cat_traces) / len(bad_traces) * 100
-        with st.expander(f"{cat} ({len(cat_traces)} - {pct:.1f}%)"):
-            for trace in cat_traces[:5]:
-                st.markdown(f"**Trace {trace['id'][:8]}...** - {trace['annotation'].get('notes', 'No notes')}")
-                st.caption(trace.get("output_content", "")[:200])
-
-    st.divider()
-
-    # LLM Analysis button
-    st.subheader("LLM-Powered Analysis")
-    st.caption("Use an LLM to automatically cluster and categorize failures")
-
-    if st.button("Analyze Failures with LLM", type="primary"):
-        st.info("LLM analysis feature coming soon. For now, use manual categorization in annotations.")
-
-        # TODO: Implement LLM-powered clustering
-        # This would:
-        # 1. Batch failures into chunks
-        # 2. Send to LLM with prompt asking to categorize
-        # 3. Display clustered results
-        # 4. Allow saving categories back to annotations
+        with st.expander(f"{cat} ({len(cat_traces)} - {pct:.0f}%)"):
+            for trace in cat_traces[:3]:
+                st.markdown(f"**{trace['id'][:8]}**: {trace['annotation'].get('notes', '')[:50]}")
+                st.caption(trace.get("output_content", "")[:150])
 
 
 # =============================================================================
-# Main App
+# Main
 # =============================================================================
 def main():
-    st.set_page_config(
-        page_title="LLM Eval Dashboard",
-        page_icon="📊",
-        layout="wide",
-        initial_sidebar_state="expanded"
-    )
+    st.set_page_config(page_title="LLM Eval", layout="wide", initial_sidebar_state="expanded")
+    st.markdown(COMPACT_CSS, unsafe_allow_html=True)
 
-    # Sidebar navigation
-    st.sidebar.title("LLM Eval")
-    st.sidebar.caption("Evaluation & Tracing Dashboard")
+    st.sidebar.markdown("### LLM Eval")
 
-    # Database path input
     import os
     default_db = os.environ.get("LLM_EVAL_DB_PATH", "traces.db")
-    db_path = st.sidebar.text_input("Database Path", value=default_db, key="db_path_input")
-
-    # Update environment so get_store picks it up
+    db_path = st.sidebar.text_input("DB Path", value=default_db, key="db_input")
     if db_path:
         os.environ["LLM_EVAL_DB_PATH"] = db_path
 
-    st.sidebar.caption(f"Current: {db_path}")
+    page = st.sidebar.radio("Page", ["Sessions", "Versions", "Failures"], label_visibility="collapsed")
 
-    st.sidebar.divider()
-
-    page = st.sidebar.radio(
-        "Navigation",
-        ["Session Explorer", "Version Comparison", "Failure Analysis"],
-        label_visibility="collapsed"
-    )
-
-    st.sidebar.divider()
-
-    # Database info
     store = get_store()
     sessions = store.get_sessions()
-    st.sidebar.metric("Total Sessions", len(sessions))
-    st.sidebar.metric("Total Traces", sum(s["trace_count"] for s in sessions))
+    c1, c2 = st.sidebar.columns(2)
+    c1.metric("Sessions", len(sessions))
+    c2.metric("Traces", sum(s["trace_count"] for s in sessions))
 
-    # Route to page
-    if page == "Session Explorer":
+    if page == "Sessions":
         page_session_explorer()
-    elif page == "Version Comparison":
+    elif page == "Versions":
         page_version_comparison()
-    elif page == "Failure Analysis":
+    elif page == "Failures":
         page_failure_analysis()
 
 
