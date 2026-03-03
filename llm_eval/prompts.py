@@ -70,3 +70,37 @@ class PromptRegistry:
         prompt.id = prompt_id
 
         return prompt
+
+    def get(self, name: str, version: int | None = None) -> Prompt:
+        """Get a prompt by name and optional version.
+
+        Args:
+            name: The prompt name.
+            version: Specific version to retrieve. If None, returns latest.
+
+        Returns:
+            The requested Prompt.
+
+        Raises:
+            KeyError: If prompt not found.
+        """
+        prompt_data = self._store.get_prompt(name, version)
+
+        if prompt_data is None:
+            if version is not None:
+                raise KeyError(f"Prompt '{name}' version {version} not found")
+            raise KeyError(f"Prompt '{name}' not found")
+
+        return Prompt(**prompt_data)
+
+    def list_versions(self, name: str) -> list[Prompt]:
+        """List all versions of a prompt.
+
+        Args:
+            name: The prompt name.
+
+        Returns:
+            List of Prompt objects ordered by version descending.
+        """
+        prompt_data_list = self._store.list_prompt_versions(name)
+        return [Prompt(**data) for data in prompt_data_list]
