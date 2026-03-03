@@ -23,16 +23,25 @@ from llm_eval.models import Annotation
 
 def get_store() -> TraceStore:
     """Get or create the TraceStore instance."""
-    # Check for command line argument
-    db_path = "traces.db"
+    # Check for command line argument or environment variable
+    import os
+
+    db_path = os.environ.get("LLM_EVAL_DB_PATH", "traces.db")
+
+    # Also check command line args
     if len(sys.argv) > 1:
         for i, arg in enumerate(sys.argv):
             if arg == "--db-path" and i + 1 < len(sys.argv):
                 db_path = sys.argv[i + 1]
                 break
+            # Also support --db-path=value format
+            if arg.startswith("--db-path="):
+                db_path = arg.split("=", 1)[1]
+                break
 
-    if "store" not in st.session_state:
+    if "store" not in st.session_state or st.session_state.get("db_path") != db_path:
         st.session_state.store = TraceStore(db_path)
+        st.session_state.db_path = db_path
     return st.session_state.store
 
 
@@ -461,6 +470,19 @@ def main():
     # Sidebar navigation
     st.sidebar.title("LLM Eval")
     st.sidebar.caption("Evaluation & Tracing Dashboard")
+
+    # Database path input
+    import os
+    default_db = os.environ.get("LLM_EVAL_DB_PATH", "traces.db")
+    db_path = st.sidebar.text_input("Database Path", value=default_db, key="db_path_input")
+
+    # Update environment so get_store picks it up
+    if db_path:
+        os.environ["LLM_EVAL_DB_PATH"] = db_path
+
+    st.sidebar.caption(f"Current: {db_path}")
+
+    st.sidebar.divider()
 
     page = st.sidebar.radio(
         "Navigation",
