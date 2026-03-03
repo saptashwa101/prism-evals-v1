@@ -1,5 +1,6 @@
 # Secrets
 var_config.py
+.env
 
 # Worktrees
 worktree_*/
@@ -50,3 +51,5 @@ htmlcov/
 # OS
 .DS_Store
 Thumbs.db
+
+.env
