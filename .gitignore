@@ -1,3 +1,6 @@
+# Secrets
+var_config.py
+
 # Worktrees
 worktree_*/
 
