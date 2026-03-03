@@ -237,3 +237,53 @@ class LLMTracer(BaseCallbackHandler):
         )
 
         self._store.save_trace(trace.model_dump())
+
+    def on_llm_error(
+        self,
+        error: BaseException,
+        *,
+        run_id: UUID,
+        **kwargs: Any,
+    ) -> None:
+        """Handle an error during an LLM call.
+
+        Saves a partial trace with error information and status="error".
+        Per design decision, we store partial traces with error info rather than
+        skipping failed calls.
+
+        Args:
+            error: The exception that occurred during the LLM call.
+            run_id: Unique identifier matching the on_llm_start call.
+            **kwargs: Additional keyword arguments.
+        """
+        run_id_str = str(run_id)
+
+        # Retrieve and remove the pending context
+        with self._lock:
+            context = self._pending.pop(run_id_str, None)
+
+        if context is None:
+            # This shouldn't happen in normal operation
+            return
+
+        # Calculate latency up to the error
+        latency_ms = int((time.time() - context.start_time) * 1000)
+
+        # Create and save partial trace with error info
+        trace = Trace(
+            project=self.project,
+            session_id=self.session_id,
+            prompt_name=context.prompt_name,
+            prompt_version=context.prompt_version,
+            input_messages=context.input_messages,
+            output_content="",
+            error=str(error),
+            input_tokens=0,
+            output_tokens=0,
+            total_tokens=0,
+            model_name="",
+            latency_ms=latency_ms,
+            status="error",
+        )
+
+        self._store.save_trace(trace.model_dump())
