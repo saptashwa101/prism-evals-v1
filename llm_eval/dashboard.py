@@ -168,82 +168,149 @@ def page_session_explorer():
 
         # Display each trace as a card
         for i, trace in enumerate(traces):
-            with st.container():
-                # Card header
-                status_icon = "✅" if trace["status"] == "success" else "❌"
-                st.markdown(f"### {status_icon} Trace {i+1} - {trace['prompt_name']} v{trace['prompt_version']}")
+            # Card container with border styling
+            st.markdown(f"""
+            <div style="border: 1px solid #ddd; border-radius: 10px; padding: 15px; margin-bottom: 25px; background-color: #fafafa;">
+            """, unsafe_allow_html=True)
 
-                # Input messages (collapsible)
-                with st.expander("Input Messages", expanded=False):
-                    st.markdown(format_messages(trace.get("input_messages", [])))
+            # Card header with status and metrics
+            status_icon = "✅" if trace["status"] == "success" else "❌"
+            annotation = store.get_annotation(trace["id"])
+            ann_badge = ""
+            if annotation:
+                ann_badge = "🟢 Good" if annotation["rating"] == "good" else "🔴 Bad"
 
-                # Output
-                st.markdown("**Output:**")
-                if trace["status"] == "error":
-                    st.error(f"Error: {trace.get('error', 'Unknown error')}")
+            col_h1, col_h2 = st.columns([3, 1])
+            with col_h1:
+                st.markdown(f"### {status_icon} Trace {i+1}: {trace['prompt_name']} v{trace['prompt_version']}")
+            with col_h2:
+                if ann_badge:
+                    st.markdown(f"**{ann_badge}**")
+
+            # Metrics row
+            col_m1, col_m2, col_m3, col_m4, col_m5 = st.columns(5)
+            with col_m1:
+                st.metric("Input Tokens", trace.get("input_tokens", 0))
+            with col_m2:
+                st.metric("Output Tokens", trace.get("output_tokens", 0))
+            with col_m3:
+                st.metric("Total Tokens", trace.get("total_tokens", 0))
+            with col_m4:
+                st.metric("Latency", f"{trace.get('latency_ms', 0)}ms")
+            with col_m5:
+                st.metric("Model", trace.get("model_name", "N/A")[:15])
+
+            st.markdown("---")
+
+            # Input messages (shown by default)
+            st.markdown("##### 📥 Input Messages")
+            input_msgs = trace.get("input_messages", [])
+            for msg in input_msgs:
+                role = msg.get("role", "unknown").upper()
+                content = msg.get("content", "")
+                if isinstance(content, list):
+                    content = " ".join(
+                        item.get("text", str(item))
+                        for item in content
+                        if isinstance(item, dict)
+                    )
+
+                # Color code by role
+                if role == "SYSTEM":
+                    st.info(f"**{role}**: {content}")
+                elif role == "USER":
+                    st.chat_message("user").markdown(content)
+                elif role == "ASSISTANT":
+                    st.chat_message("assistant").markdown(content)
                 else:
-                    st.markdown(trace.get("output_content", "No output"))
+                    st.markdown(f"**{role}**: {content}")
 
-                # Annotation form
-                st.markdown("---")
-                annotation = store.get_annotation(trace["id"])
+            st.markdown("---")
 
-                col_a1, col_a2 = st.columns([1, 2])
-                with col_a1:
-                    current_rating = annotation["rating"] if annotation else None
-                    rating_options = ["good", "bad"]
-                    rating_index = rating_options.index(current_rating) if current_rating in rating_options else None
+            # Output (shown by default)
+            st.markdown("##### 📤 Output")
+            if trace["status"] == "error":
+                st.error(f"**Error:** {trace.get('error', 'Unknown error')}")
+            else:
+                st.chat_message("assistant").markdown(trace.get("output_content", "No output"))
 
-                    new_rating = st.radio(
-                        "Rating",
-                        rating_options,
-                        index=rating_index,
-                        key=f"rating_{trace['id']}",
-                        horizontal=True
-                    )
+            # Additional metadata
+            with st.expander("📋 Additional Details", expanded=False):
+                col_d1, col_d2 = st.columns(2)
+                with col_d1:
+                    st.text(f"Trace ID: {trace['id']}")
+                    st.text(f"Created: {trace.get('created_at', 'N/A')}")
+                    st.text(f"Session: {trace.get('session_id', 'N/A')[:20]}...")
+                with col_d2:
+                    st.text(f"Project: {trace.get('project', 'N/A')}")
+                    st.text(f"Status: {trace.get('status', 'N/A')}")
+                    metadata = trace.get("metadata", {})
+                    if metadata:
+                        st.text(f"Metadata: {metadata}")
 
-                with col_a2:
-                    current_notes = annotation["notes"] if annotation else ""
-                    new_notes = st.text_input(
-                        "Notes",
-                        value=current_notes,
-                        key=f"notes_{trace['id']}"
-                    )
+            st.markdown("---")
 
+            # Annotation form
+            st.markdown("##### ✏️ Annotation")
+
+            col_a1, col_a2, col_a3 = st.columns([1, 2, 1])
+            with col_a1:
+                current_rating = annotation["rating"] if annotation else None
+                rating_options = ["good", "bad"]
+                rating_index = rating_options.index(current_rating) if current_rating in rating_options else None
+
+                new_rating = st.radio(
+                    "Rating",
+                    rating_options,
+                    index=rating_index,
+                    key=f"rating_{trace['id']}",
+                    horizontal=True
+                )
+
+            with col_a2:
+                current_notes = annotation["notes"] if annotation else ""
+                new_notes = st.text_input(
+                    "Notes",
+                    value=current_notes,
+                    key=f"notes_{trace['id']}",
+                    placeholder="Add notes about this output..."
+                )
+
+            with col_a3:
                 # Failure category (only show if rating is bad)
                 current_category = annotation["failure_category"] if annotation else ""
                 if new_rating == "bad":
                     new_category = st.text_input(
                         "Failure Category",
                         value=current_category,
-                        key=f"category_{trace['id']}"
+                        key=f"category_{trace['id']}",
+                        placeholder="e.g., hallucination"
                     )
                 else:
                     new_category = ""
 
-                # Save button
-                if st.button("Save Annotation", key=f"save_{trace['id']}"):
-                    if new_rating:
-                        ann = Annotation(
-                            trace_id=trace["id"],
-                            rating=new_rating,
-                            notes=new_notes,
-                            failure_category=new_category,
-                            annotator="dashboard_user"
-                        )
-                        store.save_annotation(ann.model_dump())
-                        st.success("Saved!")
-                        st.rerun()
+            # Save button
+            if st.button("💾 Save Annotation", key=f"save_{trace['id']}", type="primary"):
+                if new_rating:
+                    ann = Annotation(
+                        trace_id=trace["id"],
+                        rating=new_rating,
+                        notes=new_notes,
+                        failure_category=new_category,
+                        annotator="dashboard_user"
+                    )
+                    store.save_annotation(ann.model_dump())
+                    st.success("Annotation saved!")
+                    st.rerun()
 
-                st.divider()
+            st.markdown("</div>", unsafe_allow_html=True)
 
-                # Track selected trace for right panel
-                if st.button("Show Details", key=f"details_{trace['id']}"):
-                    st.session_state.selected_trace = trace
+            # Space between traces
+            st.markdown("<br>", unsafe_allow_html=True)
 
     # === RIGHT PANEL: Metrics ===
     with col_right:
-        st.subheader("Metrics")
+        st.subheader("📊 Session Metrics")
 
         if selected_session:
             # Session summary
@@ -251,21 +318,70 @@ def page_session_explorer():
             if session_data:
                 st.metric("Total Traces", session_data["trace_count"])
                 st.metric("Total Tokens", session_data["total_tokens"] or 0)
-                st.metric("Success", session_data["success_count"])
-                st.metric("Errors", session_data["error_count"])
 
-        st.divider()
+                col_s1, col_s2 = st.columns(2)
+                with col_s1:
+                    st.metric("Success", session_data["success_count"], delta_color="normal")
+                with col_s2:
+                    st.metric("Errors", session_data["error_count"], delta_color="inverse")
 
-        # Selected trace details
-        selected_trace = st.session_state.get("selected_trace")
-        if selected_trace:
-            st.subheader("Selected Trace")
-            st.text(f"ID: {selected_trace['id'][:8]}...")
-            st.text(f"Model: {selected_trace.get('model_name', 'N/A')}")
-            st.text(f"Input: {selected_trace.get('input_tokens', 0)} tok")
-            st.text(f"Output: {selected_trace.get('output_tokens', 0)} tok")
-            st.text(f"Latency: {selected_trace.get('latency_ms', 0)} ms")
-            st.text(f"Prompt: v{selected_trace.get('prompt_version', '?')}")
+            st.divider()
+
+            # Calculate more metrics from traces
+            if traces:
+                total_input = sum(t.get("input_tokens", 0) for t in traces)
+                total_output = sum(t.get("output_tokens", 0) for t in traces)
+                total_latency = sum(t.get("latency_ms", 0) for t in traces)
+                avg_latency = total_latency / len(traces) if traces else 0
+
+                st.markdown("##### Token Breakdown")
+                st.metric("Input Tokens", f"{total_input:,}")
+                st.metric("Output Tokens", f"{total_output:,}")
+
+                st.divider()
+
+                st.markdown("##### Performance")
+                st.metric("Avg Latency", f"{avg_latency:.0f}ms")
+                st.metric("Total Time", f"{total_latency/1000:.1f}s")
+
+                st.divider()
+
+                # Annotation stats
+                st.markdown("##### Annotations")
+                good_count = sum(1 for t in traces if store.get_annotation(t["id"]) and store.get_annotation(t["id"])["rating"] == "good")
+                bad_count = sum(1 for t in traces if store.get_annotation(t["id"]) and store.get_annotation(t["id"])["rating"] == "bad")
+                unannotated = len(traces) - good_count - bad_count
+
+                col_a1, col_a2 = st.columns(2)
+                with col_a1:
+                    st.metric("Good", good_count)
+                with col_a2:
+                    st.metric("Bad", bad_count)
+
+                st.metric("Unannotated", unannotated)
+
+                if good_count + bad_count > 0:
+                    pass_rate = good_count / (good_count + bad_count) * 100
+                    st.metric("Pass Rate", f"{pass_rate:.0f}%")
+
+                st.divider()
+
+                # Models used
+                st.markdown("##### Models Used")
+                models = set(t.get("model_name", "Unknown") for t in traces)
+                for model in models:
+                    if model:
+                        count = sum(1 for t in traces if t.get("model_name") == model)
+                        st.text(f"{model}: {count}")
+
+                st.divider()
+
+                # Prompt versions used
+                st.markdown("##### Prompt Versions")
+                prompts = set((t.get("prompt_name"), t.get("prompt_version")) for t in traces)
+                for name, version in sorted(prompts):
+                    count = sum(1 for t in traces if t.get("prompt_name") == name and t.get("prompt_version") == version)
+                    st.text(f"{name} v{version}: {count}")
 
 
 # =============================================================================
