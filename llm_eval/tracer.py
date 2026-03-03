@@ -91,3 +91,61 @@ class LLMTracer(BaseCallbackHandler):
 
         self._prompt_name = name
         self._prompt_version = prompt.version if hasattr(prompt, 'version') else prompt['version']
+
+    def on_llm_start(
+        self,
+        serialized: dict[str, Any],
+        prompts: list[str],
+        *,
+        run_id: UUID,
+        **kwargs: Any,
+    ) -> None:
+        """Handle the start of an LLM call.
+
+        Records the start time and input messages for later use in on_llm_end.
+
+        Args:
+            serialized: Serialized LLM configuration.
+            prompts: List of prompt strings sent to the LLM.
+            run_id: Unique identifier for this LLM run.
+            **kwargs: Additional keyword arguments (may include messages).
+
+        Raises:
+            RuntimeError: If set_prompt_context() was not called before this LLM call.
+        """
+        if self._prompt_name is None or self._prompt_version is None:
+            raise RuntimeError(
+                "set_prompt_context() must be called before LLM invocation. "
+                "No prompt context has been set."
+            )
+
+        # Extract input messages from kwargs or prompts
+        messages = kwargs.get("messages", [])
+        if messages:
+            # Convert BaseMessage objects to dicts if needed
+            input_messages = []
+            for msg in messages:
+                if hasattr(msg, "model_dump"):
+                    input_messages.append(msg.model_dump())
+                elif hasattr(msg, "dict"):
+                    input_messages.append(msg.dict())
+                elif isinstance(msg, dict):
+                    input_messages.append(msg)
+                else:
+                    input_messages.append({"content": str(msg)})
+        else:
+            # Fallback to prompts list
+            input_messages = [{"role": "user", "content": p} for p in prompts]
+
+        # Create call context and store in pending dict
+        run_id_str = str(run_id)
+        context = CallContext(
+            run_id=run_id_str,
+            prompt_name=self._prompt_name,
+            prompt_version=self._prompt_version,
+            input_messages=input_messages,
+            start_time=time.time(),
+        )
+
+        with self._lock:
+            self._pending[run_id_str] = context
