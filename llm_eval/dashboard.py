@@ -20,29 +20,35 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 from llm_eval.store import TraceStore
 from llm_eval.models import Annotation
 
-# Compact CSS
+# Compact CSS - White mode, tight spacing
 COMPACT_CSS = """
 <style>
-    .block-container {padding-top: 1rem; padding-bottom: 0rem;}
-    h1 {font-size: 1.5rem !important; margin-bottom: 0.5rem !important;}
-    h2 {font-size: 1.2rem !important; margin-bottom: 0.3rem !important;}
-    h3 {font-size: 1rem !important; margin-bottom: 0.2rem !important;}
-    .stMetric {padding: 0.2rem 0 !important;}
-    .stMetric label {font-size: 0.75rem !important;}
-    .stMetric [data-testid="stMetricValue"] {font-size: 1rem !important;}
-    div[data-testid="stExpander"] {margin-bottom: 0.3rem !important;}
-    .stRadio > div {gap: 0.3rem !important;}
-    .stTextInput > div > div > input {padding: 0.3rem 0.5rem !important;}
-    .stButton > button {padding: 0.2rem 0.8rem !important; font-size: 0.8rem !important;}
-    .trace-card {border: 1px solid #ddd; border-radius: 4px; padding: 8px 12px; margin-bottom: 10px; background: #fff;}
-    .msg-box {padding: 6px 10px; border-radius: 4px; font-size: 0.85rem; margin: 3px 0; border-left: 3px solid;}
-    .msg-system {background: #f8f9fa; border-left-color: #6c757d;}
-    .msg-user {background: #f8f9fa; border-left-color: #0d6efd;}
-    .msg-assistant {background: #f8f9fa; border-left-color: #198754;}
-    .msg-label {font-weight: 600; color: #495057; font-size: 0.75rem; text-transform: uppercase;}
-    .metrics-row {display: flex; gap: 8px; font-size: 0.75rem; color: #666; margin: 4px 0;}
-    .metrics-row span {background: #f8f9fa; padding: 2px 6px; border-radius: 3px; border: 1px solid #eee;}
-    hr {margin: 6px 0 !important; border-color: #eee !important;}
+    .block-container {padding: 0.5rem 1rem !important;}
+    section[data-testid="stSidebar"] {padding-top: 0.5rem;}
+    h1 {font-size: 1.3rem !important; margin: 0 0 0.3rem 0 !important;}
+    h2 {font-size: 1.1rem !important; margin: 0 0 0.2rem 0 !important;}
+    h3 {font-size: 0.95rem !important; margin: 0 !important;}
+    p {margin: 0 !important;}
+    .stMetric {padding: 0 !important;}
+    .stMetric label {font-size: 0.7rem !important; margin: 0 !important;}
+    .stMetric [data-testid="stMetricValue"] {font-size: 0.9rem !important;}
+    div[data-testid="stExpander"] {margin: 0 !important;}
+    div[data-testid="stExpander"] summary {padding: 0.3rem 0 !important; font-size: 0.85rem !important;}
+    div[data-testid="stExpander"] > div {padding: 0 !important;}
+    .stRadio > div {gap: 0.2rem !important;}
+    .stRadio label {font-size: 0.8rem !important;}
+    .stTextInput {margin: 0 !important;}
+    .stTextInput > div > div > input {padding: 0.2rem 0.4rem !important; font-size: 0.8rem !important;}
+    .stButton > button {padding: 0.15rem 0.5rem !important; font-size: 0.75rem !important;}
+    .stSelectbox {margin-bottom: 0.3rem !important;}
+    .stSelectbox label {font-size: 0.8rem !important;}
+    div[data-testid="stVerticalBlock"] > div {gap: 0.2rem !important;}
+    .trace-card {border: 1px solid #e0e0e0; border-radius: 3px; padding: 6px 8px; margin-bottom: 8px;}
+    .msg-box {padding: 4px 8px; font-size: 0.8rem; margin: 2px 0; border-left: 2px solid #999;}
+    .msg-label {font-weight: 600; font-size: 0.7rem; text-transform: uppercase; color: #666;}
+    .metrics-inline {font-size: 0.7rem; color: #666; margin: 2px 0;}
+    hr {margin: 4px 0 !important; border: none; border-top: 1px solid #eee !important;}
+    .stDivider {margin: 0.2rem 0 !important;}
 </style>
 """
 
@@ -68,13 +74,10 @@ def get_store() -> TraceStore:
 
 
 def render_message(role: str, content: str):
-    """Render a message with role-based styling."""
+    """Render a message with minimal styling."""
     if isinstance(content, list):
         content = " ".join(item.get("text", str(item)) for item in content if isinstance(item, dict))
-
-    role_lower = role.lower()
-    css_class = f"msg-{role_lower}" if role_lower in ["system", "user", "assistant"] else "msg-user"
-    st.markdown(f'<div class="msg-box {css_class}"><span class="msg-label">{role}</span><br>{content}</div>', unsafe_allow_html=True)
+    st.markdown(f'<div class="msg-box"><span class="msg-label">{role}</span> {content}</div>', unsafe_allow_html=True)
 
 
 # =============================================================================
@@ -134,25 +137,21 @@ def page_session_explorer():
             if annotation:
                 ann_status = " [GOOD]" if annotation["rating"] == "good" else " [BAD]"
 
-            # Metrics line
-            metrics = f"in:{trace.get('input_tokens',0)} out:{trace.get('output_tokens',0)} | {trace.get('latency_ms',0)}ms | {trace.get('model_name','')[:20]}"
-
-            st.markdown(f"""<div class="trace-card">
-                <b>#{i+1} {trace['prompt_name']} v{trace['prompt_version']}</b> [{status}]{ann_status}
-                <div class="metrics-row"><span>{metrics}</span></div>
-            </div>""", unsafe_allow_html=True)
+            # Header with metrics
+            metrics = f"in:{trace.get('input_tokens',0)} out:{trace.get('output_tokens',0)} | {trace.get('latency_ms',0)}ms | {trace.get('model_name','')[:15]}"
+            st.markdown(f'<div class="trace-card"><b>#{i+1} {trace["prompt_name"]} v{trace["prompt_version"]}</b> [{status}]{ann_status}<br><span class="metrics-inline">{metrics}</span></div>', unsafe_allow_html=True)
 
             # Input messages
-            with st.expander(f"Input ({len(trace.get('input_messages', []))} msgs)", expanded=True):
+            with st.expander(f"Input ({len(trace.get('input_messages', []))})", expanded=True):
                 for msg in trace.get("input_messages", []):
-                    render_message(msg.get("role", "unknown"), msg.get("content", ""))
+                    render_message(msg.get("role", ""), msg.get("content", ""))
 
             # Output
             with st.expander("Output", expanded=True):
                 if trace["status"] == "error":
                     st.error(trace.get("error", "Error"))
                 else:
-                    st.markdown(trace.get("output_content", ""))
+                    st.text(trace.get("output_content", ""))
 
             # Annotation
             col_r, col_n, col_c, col_s = st.columns([1, 2, 1.5, 0.8])
