@@ -34,13 +34,15 @@ COMPACT_CSS = """
     .stRadio > div {gap: 0.3rem !important;}
     .stTextInput > div > div > input {padding: 0.3rem 0.5rem !important;}
     .stButton > button {padding: 0.2rem 0.8rem !important; font-size: 0.8rem !important;}
-    .trace-card {border: 1px solid #e0e0e0; border-radius: 6px; padding: 10px; margin-bottom: 12px; background: #fafafa;}
-    .msg-system {background: #e3f2fd; padding: 6px 10px; border-radius: 4px; font-size: 0.85rem; margin: 2px 0;}
-    .msg-user {background: #fff3e0; padding: 6px 10px; border-radius: 4px; font-size: 0.85rem; margin: 2px 0;}
-    .msg-assistant {background: #e8f5e9; padding: 6px 10px; border-radius: 4px; font-size: 0.85rem; margin: 2px 0;}
+    .trace-card {border: 1px solid #ddd; border-radius: 4px; padding: 8px 12px; margin-bottom: 10px; background: #fff;}
+    .msg-box {padding: 6px 10px; border-radius: 4px; font-size: 0.85rem; margin: 3px 0; border-left: 3px solid;}
+    .msg-system {background: #f8f9fa; border-left-color: #6c757d;}
+    .msg-user {background: #f8f9fa; border-left-color: #0d6efd;}
+    .msg-assistant {background: #f8f9fa; border-left-color: #198754;}
+    .msg-label {font-weight: 600; color: #495057; font-size: 0.75rem; text-transform: uppercase;}
     .metrics-row {display: flex; gap: 8px; font-size: 0.75rem; color: #666; margin: 4px 0;}
-    .metrics-row span {background: #f5f5f5; padding: 2px 6px; border-radius: 3px;}
-    hr {margin: 6px 0 !important;}
+    .metrics-row span {background: #f8f9fa; padding: 2px 6px; border-radius: 3px; border: 1px solid #eee;}
+    hr {margin: 6px 0 !important; border-color: #eee !important;}
 </style>
 """
 
@@ -70,8 +72,9 @@ def render_message(role: str, content: str):
     if isinstance(content, list):
         content = " ".join(item.get("text", str(item)) for item in content if isinstance(item, dict))
 
-    css_class = f"msg-{role.lower()}"
-    st.markdown(f'<div class="{css_class}"><b>{role}:</b> {content}</div>', unsafe_allow_html=True)
+    role_lower = role.lower()
+    css_class = f"msg-{role_lower}" if role_lower in ["system", "user", "assistant"] else "msg-user"
+    st.markdown(f'<div class="msg-box {css_class}"><span class="msg-label">{role}</span><br>{content}</div>', unsafe_allow_html=True)
 
 
 # =============================================================================
