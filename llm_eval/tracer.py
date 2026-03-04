@@ -92,6 +92,35 @@ class LLMTracer(BaseCallbackHandler):
         self._prompt_name = name
         self._prompt_version = prompt.version if hasattr(prompt, 'version') else prompt['version']
 
+    def _normalize_message(self, msg: Any) -> dict[str, Any]:
+        """Convert a message to dict with standard 'role' field.
+
+        LangChain uses 'type' field (system, human, ai) while the dashboard
+        expects 'role' field (system, user, assistant). This method normalizes
+        the message format.
+
+        Args:
+            msg: A message object (LangChain BaseMessage, dict, or string).
+
+        Returns:
+            Dictionary with 'role' and 'content' fields.
+        """
+        if hasattr(msg, "model_dump"):
+            d = msg.model_dump()
+        elif hasattr(msg, "dict"):
+            d = msg.dict()
+        elif isinstance(msg, dict):
+            d = dict(msg)
+        else:
+            return {"role": "user", "content": str(msg)}
+
+        # Map LangChain 'type' to standard 'role' if needed
+        if "type" in d and "role" not in d:
+            type_to_role = {"system": "system", "human": "user", "ai": "assistant"}
+            d["role"] = type_to_role.get(d["type"], "user")
+
+        return d
+
     def on_llm_start(
         self,
         serialized: dict[str, Any],
@@ -122,17 +151,8 @@ class LLMTracer(BaseCallbackHandler):
         # Extract input messages from kwargs or prompts
         messages = kwargs.get("messages", [])
         if messages:
-            # Convert BaseMessage objects to dicts if needed
-            input_messages = []
-            for msg in messages:
-                if hasattr(msg, "model_dump"):
-                    input_messages.append(msg.model_dump())
-                elif hasattr(msg, "dict"):
-                    input_messages.append(msg.dict())
-                elif isinstance(msg, dict):
-                    input_messages.append(msg)
-                else:
-                    input_messages.append({"content": str(msg)})
+            # Convert BaseMessage objects to dicts with normalized 'role' field
+            input_messages = [self._normalize_message(msg) for msg in messages]
         else:
             # Fallback to prompts list
             input_messages = [{"role": "user", "content": p} for p in prompts]

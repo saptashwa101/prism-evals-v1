@@ -438,7 +438,7 @@ def analyze_failures_stub(failures: list[dict]) -> list[dict]:
 
 
 def render_message(role: str, content: str, max_len: int = 500) -> None:
-    """Render a chat message bubble."""
+    """Render a chat message bubble with proper box styling."""
     if isinstance(content, list):
         content = " ".join(
             str(c.get("text", c)) if isinstance(c, dict) else str(c) for c in content
@@ -446,23 +446,67 @@ def render_message(role: str, content: str, max_len: int = 500) -> None:
 
     truncated, was_truncated = truncate_text(content, max_len)
     role_lower = role.lower()
-    msg_class = f"msg-{role_lower}" if role_lower in ["user", "assistant", "system"] else "msg-system"
 
-    # Role label
+    # Determine styling based on role
+    if role_lower == "user":
+        bg_color = "#172554"
+        border_color = "#3b82f6"
+        label_color = "#60a5fa"
+    elif role_lower == "assistant":
+        bg_color = "#14532d"
+        border_color = "#22c55e"
+        label_color = "#4ade80"
+    else:  # system
+        bg_color = "#1c1c1e"
+        border_color = "#3f3f46"
+        label_color = "#71717a"
+
+    # Escape content for HTML but preserve newlines
+    safe_content = content.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+    safe_truncated = truncated.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+
+    # Convert markdown-style bold to HTML bold for display
+    import re
+    safe_truncated = re.sub(r'\*\*(.+?)\*\*', r'<strong>\1</strong>', safe_truncated)
+    safe_truncated = re.sub(r'###\s*(.+?)(\n|$)', r'<strong style="font-size: 0.95rem;">\1</strong><br>', safe_truncated)
+    safe_truncated = safe_truncated.replace('\n', '<br>')
+
+    # Render complete message box with content inside
     st.markdown(
-        f'<div class="msg-bubble {msg_class}"><div class="msg-role">{role.upper()}</div>',
+        f"""
+        <div style="
+            background: {bg_color};
+            border-left: 4px solid {border_color};
+            border-radius: 8px;
+            padding: 0.75rem 1rem;
+            margin: 0.75rem 0;
+        ">
+            <div style="
+                font-family: 'JetBrains Mono', monospace;
+                font-size: 0.7rem;
+                font-weight: 600;
+                text-transform: uppercase;
+                letter-spacing: 0.05em;
+                color: {label_color};
+                margin-bottom: 0.5rem;
+                padding-bottom: 0.4rem;
+                border-bottom: 1px solid {border_color}40;
+            ">{role.upper()}</div>
+            <div style="
+                color: #fafafa;
+                font-size: 0.9rem;
+                line-height: 1.6;
+                white-space: pre-wrap;
+                word-break: break-word;
+            ">{safe_truncated}</div>
+        </div>
+        """,
         unsafe_allow_html=True,
     )
 
-    # Content - use st.markdown to render markdown formatting
-    st.markdown(truncated)
-
-    # Close the div
-    st.markdown('</div>', unsafe_allow_html=True)
-
     if was_truncated:
         with st.expander("Show full message"):
-            st.markdown(content)
+            st.code(content, language=None)
 
 
 def render_trace(trace: dict, index: int, store: TraceStore) -> None:
@@ -479,11 +523,11 @@ def render_trace(trace: dict, index: int, store: TraceStore) -> None:
         rating_text = annotation["rating"].upper()
         rating_html = f'<span class="trace-badge {rating_class}">{rating_text}</span>'
 
-    # Trace header
+    # Compact trace header
     st.markdown(
         f"""
-        <div class="trace-card">
-            <div class="trace-header">
+        <div class="trace-card" style="padding: 0.5rem 0.75rem; margin: 0.5rem 0;">
+            <div class="trace-header" style="margin-bottom: 0; padding-bottom: 0; border-bottom: none;">
                 <span class="trace-num">#{index + 1:02d}</span>
                 <span class="trace-badge {status_badge}">{status_text}</span>
                 <span class="trace-prompt">{escape_html(trace["prompt_name"])}</span>
@@ -498,7 +542,8 @@ def render_trace(trace: dict, index: int, store: TraceStore) -> None:
     # Messages
     messages = trace.get("input_messages", [])
     system_msgs = [m for m in messages if m.get("role", "").lower() == "system"]
-    other_msgs = [m for m in messages if m.get("role", "").lower() != "system"]
+    user_msgs = [m for m in messages if m.get("role", "").lower() == "user"]
+    assistant_msgs = [m for m in messages if m.get("role", "").lower() == "assistant"]
 
     # System prompt (collapsed)
     if system_msgs:
@@ -506,9 +551,21 @@ def render_trace(trace: dict, index: int, store: TraceStore) -> None:
             for msg in system_msgs:
                 render_message("system", msg.get("content", ""), max_len=1000)
 
-    # User/Assistant messages
-    for msg in other_msgs:
-        render_message(msg.get("role", "unknown"), msg.get("content", ""))
+    # Show conversation history (earlier messages) collapsed if there are multiple
+    if len(user_msgs) > 1 or assistant_msgs:
+        with st.expander("Show conversation history", expanded=False):
+            for msg in messages:
+                role = msg.get("role", "").lower()
+                if role == "system":
+                    continue
+                # Skip the last user message (we'll show it separately)
+                if role == "user" and user_msgs and msg == user_msgs[-1]:
+                    continue
+                render_message(msg.get("role", "unknown"), msg.get("content", ""))
+
+    # Show the last user message (the actual query)
+    if user_msgs:
+        render_message("user", user_msgs[-1].get("content", ""))
 
     # Output
     if trace["status"] == "error":
@@ -718,10 +775,41 @@ def page_versions():
 
     st.markdown("---")
 
-    # Side by side comparison
+    # Collect version data
+    version_data = []
+    for ver in [ver_a, ver_b]:
+        version_traces = [
+            t for t in all_traces
+            if t["prompt_name"] == selected_prompt and t["prompt_version"] == ver["version"]
+        ]
+
+        good_count = 0
+        bad_count = 0
+        for t in version_traces:
+            ann = store.get_annotation(t["id"])
+            if ann:
+                if ann["rating"] == "good":
+                    good_count += 1
+                else:
+                    bad_count += 1
+
+        total_rated = good_count + bad_count
+        pass_rate = (good_count / total_rated * 100) if total_rated > 0 else 0
+
+        version_data.append({
+            "ver": ver,
+            "traces": version_traces,
+            "good_count": good_count,
+            "bad_count": bad_count,
+            "pass_rate": pass_rate,
+            "total_rated": total_rated,
+        })
+
+    # Side by side comparison - headers, templates, stats
     col_left, col_right = st.columns(2)
 
-    for col, ver in [(col_left, ver_a), (col_right, ver_b)]:
+    for col, data in [(col_left, version_data[0]), (col_right, version_data[1])]:
+        ver = data["ver"]
         with col:
             st.markdown(f"### Version {ver['version']}")
             st.caption(ver.get("description", "No description"))
@@ -734,39 +822,49 @@ def page_versions():
                 else:
                     st.code(template, language="text")
 
-            # Stats for this version
-            version_traces = [
-                t for t in all_traces
-                if t["prompt_name"] == selected_prompt and t["prompt_version"] == ver["version"]
-            ]
-
-            good_count = 0
-            bad_count = 0
-            for t in version_traces:
-                ann = store.get_annotation(t["id"])
-                if ann:
-                    if ann["rating"] == "good":
-                        good_count += 1
-                    else:
-                        bad_count += 1
-
-            total_rated = good_count + bad_count
-            pass_rate = (good_count / total_rated * 100) if total_rated > 0 else 0
-
             st.markdown("#### Statistics")
             s1, s2, s3 = st.columns(3)
-            s1.metric("Traces", len(version_traces))
-            s2.metric("Good / Bad", f"{good_count} / {bad_count}")
-            s3.metric("Pass Rate", f"{pass_rate:.0f}%" if total_rated > 0 else "N/A")
+            s1.metric("Traces", len(data["traces"]))
+            s2.metric("Good / Bad", f"{data['good_count']} / {data['bad_count']}")
+            s3.metric("Pass Rate", f"{data['pass_rate']:.0f}%" if data["total_rated"] > 0 else "N/A")
 
-            # Sample outputs
-            if version_traces:
-                st.markdown("#### Sample Outputs")
-                for i, trace in enumerate(version_traces[:3]):
-                    output = trace.get("output_content", "")[:200]
-                    if output:
-                        with st.expander(f"Sample {i + 1}", expanded=False):
-                            st.text(output + ("..." if len(trace.get("output_content", "")) > 200 else ""))
+    # Sample outputs - side by side
+    st.markdown("---")
+    st.markdown("### Sample Outputs")
+
+    max_samples = 3
+    traces_a = version_data[0]["traces"][:max_samples]
+    traces_b = version_data[1]["traces"][:max_samples]
+    num_samples = max(len(traces_a), len(traces_b))
+
+    for i in range(num_samples):
+        col_a, col_b = st.columns(2)
+
+        with col_a:
+            if i < len(traces_a):
+                output = traces_a[i].get("output_content", "") or "No output"
+                safe_output = escape_html(output).replace("\n", "<br>")
+                st.markdown(f"**Sample {i + 1}** (v{ver_a['version']})")
+                st.markdown(
+                    f"""<div style="background: var(--bg-card); border: 1px solid var(--border); border-radius: 6px; padding: 0.75rem; height: 300px; overflow-y: auto; font-size: 0.85rem; line-height: 1.5; color: var(--text-primary);">{safe_output}</div>""",
+                    unsafe_allow_html=True,
+                )
+            else:
+                st.markdown(f"**Sample {i + 1}** (v{ver_a['version']})")
+                st.caption("No sample available")
+
+        with col_b:
+            if i < len(traces_b):
+                output = traces_b[i].get("output_content", "") or "No output"
+                safe_output = escape_html(output).replace("\n", "<br>")
+                st.markdown(f"**Sample {i + 1}** (v{ver_b['version']})")
+                st.markdown(
+                    f"""<div style="background: var(--bg-card); border: 1px solid var(--border); border-radius: 6px; padding: 0.75rem; height: 300px; overflow-y: auto; font-size: 0.85rem; line-height: 1.5; color: var(--text-primary);">{safe_output}</div>""",
+                    unsafe_allow_html=True,
+                )
+            else:
+                st.markdown(f"**Sample {i + 1}** (v{ver_b['version']})")
+                st.caption("No sample available")
 
 
 # =============================================================================
