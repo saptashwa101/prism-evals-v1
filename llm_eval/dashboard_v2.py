@@ -581,9 +581,107 @@ def page_sessions():
 # Page 2: Version Comparison
 # =============================================================================
 def page_versions():
-    """Version Comparison page."""
+    """Version Comparison page - compare prompt versions side by side."""
+    store = get_store()
+
     st.markdown("# Version Comparison")
-    st.info("Page 2 implementation - see Task 2")
+    st.caption("Compare different versions of a prompt to see how changes affect performance.")
+
+    # Get all traces to find prompt names
+    all_traces = store.get_traces({})
+    if not all_traces:
+        st.info("No traces found. Run some traced LLM calls first.")
+        return
+
+    prompt_names = sorted(set(t["prompt_name"] for t in all_traces))
+    if not prompt_names:
+        st.info("No prompts found in traces.")
+        return
+
+    # Prompt selector
+    selected_prompt = st.selectbox("Select Prompt", prompt_names, key="compare_prompt")
+
+    # Get versions for this prompt
+    versions = store.list_prompt_versions(selected_prompt)
+    if len(versions) < 2:
+        st.warning(f"Need at least 2 versions to compare. Found: {len(versions)}")
+        return
+
+    # Version selectors
+    col_a, col_b = st.columns(2)
+
+    with col_a:
+        version_opts_a = [f"v{v['version']}" for v in versions]
+        idx_a = st.selectbox(
+            "Version A",
+            range(len(version_opts_a)),
+            format_func=lambda x: version_opts_a[x],
+            key="version_a",
+        )
+        ver_a = versions[idx_a]
+
+    with col_b:
+        version_opts_b = [f"v{v['version']}" for v in versions]
+        idx_b = st.selectbox(
+            "Version B",
+            range(len(version_opts_b)),
+            format_func=lambda x: version_opts_b[x],
+            index=min(1, len(versions) - 1),
+            key="version_b",
+        )
+        ver_b = versions[idx_b]
+
+    st.markdown("---")
+
+    # Side by side comparison
+    col_left, col_right = st.columns(2)
+
+    for col, ver in [(col_left, ver_a), (col_right, ver_b)]:
+        with col:
+            st.markdown(f"### Version {ver['version']}")
+            st.caption(ver.get("description", "No description"))
+
+            # Template preview
+            with st.expander("Template", expanded=True):
+                template = ver.get("template", "")
+                if len(template) > 500:
+                    st.code(template[:500] + "\n...[truncated]", language="text")
+                else:
+                    st.code(template, language="text")
+
+            # Stats for this version
+            version_traces = [
+                t for t in all_traces
+                if t["prompt_name"] == selected_prompt and t["prompt_version"] == ver["version"]
+            ]
+
+            good_count = 0
+            bad_count = 0
+            for t in version_traces:
+                ann = store.get_annotation(t["id"])
+                if ann:
+                    if ann["rating"] == "good":
+                        good_count += 1
+                    else:
+                        bad_count += 1
+
+            total_rated = good_count + bad_count
+            pass_rate = (good_count / total_rated * 100) if total_rated > 0 else 0
+
+            st.markdown("#### Statistics")
+            s1, s2, s3 = st.columns(3)
+            s1.metric("Traces", len(version_traces))
+            s2.metric("Good / Bad", f"{good_count} / {bad_count}")
+            s3.metric("Pass Rate", f"{pass_rate:.0f}%" if total_rated > 0 else "N/A")
+
+            # Sample outputs
+            if version_traces:
+                st.markdown("#### Sample Outputs")
+                for i, trace in enumerate(version_traces[:3]):
+                    output = trace.get("output_content", "")[:200]
+                    if output:
+                        with st.expander(f"Sample {i + 1}", expanded=False):
+                            st.text(output + ("..." if len(trace.get("output_content", "")) > 200 else ""))
 
 
 # =============================================================================
