@@ -352,13 +352,229 @@ def truncate_text(text: str, max_len: int = 500) -> tuple[str, bool]:
     return text[:max_len], True
 
 
+def render_message(role: str, content: str, max_len: int = 500) -> None:
+    """Render a chat message bubble."""
+    if isinstance(content, list):
+        content = " ".join(
+            str(c.get("text", c)) if isinstance(c, dict) else str(c) for c in content
+        )
+
+    escaped = escape_html(content)
+    truncated, was_truncated = truncate_text(escaped, max_len)
+
+    role_lower = role.lower()
+    msg_class = f"msg-{role_lower}" if role_lower in ["user", "assistant", "system"] else "msg-system"
+
+    st.markdown(
+        f"""
+        <div class="msg-bubble {msg_class}">
+            <div class="msg-role">{role.upper()}</div>
+            <div class="msg-content">{truncated}</div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+    if was_truncated:
+        with st.expander("Show full message"):
+            st.text(content)
+
+
+def render_trace(trace: dict, index: int, store: TraceStore) -> None:
+    """Render a single trace with messages and annotation controls."""
+    annotation = store.get_annotation(trace["id"])
+
+    # Status and rating badges
+    status_badge = "badge-ok" if trace["status"] == "success" else "badge-err"
+    status_text = "OK" if trace["status"] == "success" else "ERR"
+
+    rating_html = ""
+    if annotation:
+        rating_class = "badge-good" if annotation["rating"] == "good" else "badge-bad"
+        rating_text = annotation["rating"].upper()
+        rating_html = f'<span class="trace-badge {rating_class}">{rating_text}</span>'
+
+    # Trace header
+    st.markdown(
+        f"""
+        <div class="trace-card">
+            <div class="trace-header">
+                <span class="trace-num">#{index + 1:02d}</span>
+                <span class="trace-badge {status_badge}">{status_text}</span>
+                <span class="trace-prompt">{escape_html(trace["prompt_name"])}</span>
+                <span class="trace-badge badge-version">v{trace["prompt_version"]}</span>
+                {rating_html}
+            </div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+    # Messages
+    messages = trace.get("input_messages", [])
+    system_msgs = [m for m in messages if m.get("role", "").lower() == "system"]
+    other_msgs = [m for m in messages if m.get("role", "").lower() != "system"]
+
+    # System prompt (collapsed)
+    if system_msgs:
+        with st.expander(f"System prompt ({len(system_msgs)})", expanded=False):
+            for msg in system_msgs:
+                render_message("system", msg.get("content", ""), max_len=1000)
+
+    # User/Assistant messages
+    for msg in other_msgs:
+        render_message(msg.get("role", "unknown"), msg.get("content", ""))
+
+    # Output
+    if trace["status"] == "error":
+        st.markdown(
+            f"""
+            <div class="msg-bubble msg-system" style="border-left-color: var(--accent-red);">
+                <div class="msg-role">ERROR</div>
+                <div class="msg-content" style="color: var(--accent-red);">{escape_html(trace.get("error", "Unknown error"))}</div>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+    else:
+        output = trace.get("output_content", "") or ""
+        render_message("assistant", output)
+
+    # Metrics bar
+    model = (trace.get("model_name") or "unknown")[:20]
+    st.markdown(
+        f"""
+        <div class="trace-metrics">
+            <div>in: <span>{trace.get("input_tokens", 0)}</span></div>
+            <div>out: <span>{trace.get("output_tokens", 0)}</span></div>
+            <div>latency: <span>{trace.get("latency_ms", 0)}ms</span></div>
+            <div>model: <span>{escape_html(model)}</span></div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+    # Annotation controls
+    col_rating, col_notes, col_save = st.columns([1.5, 3, 0.8])
+
+    with col_rating:
+        current_rating = annotation["rating"] if annotation else None
+        options = ["good", "bad"]
+        idx = options.index(current_rating) if current_rating in options else None
+        rating = st.radio(
+            "Rating",
+            options,
+            index=idx,
+            key=f"rating_{trace['id']}",
+            horizontal=True,
+            label_visibility="collapsed",
+        )
+
+    with col_notes:
+        notes = st.text_input(
+            "Notes",
+            value=annotation["notes"] if annotation else "",
+            key=f"notes_{trace['id']}",
+            placeholder="Add notes...",
+            label_visibility="collapsed",
+        )
+
+    with col_save:
+        if st.button("Save", key=f"save_{trace['id']}", type="primary", use_container_width=True):
+            if rating:
+                store.save_annotation(
+                    Annotation(
+                        trace_id=trace["id"],
+                        rating=rating,
+                        notes=notes,
+                        failure_category="",
+                        annotator="user",
+                    ).model_dump()
+                )
+                st.rerun()
+
+
 # =============================================================================
 # Page 1: Session Explorer
 # =============================================================================
 def page_sessions():
-    """Session Explorer page."""
-    st.markdown("# Session Explorer")
-    st.info("Page 1 implementation - see Task 1")
+    """Session Explorer page - view and annotate conversations."""
+    store = get_store()
+    sessions = store.get_sessions()
+
+    if not sessions:
+        st.info("No sessions found. Run some traced LLM calls to populate the database.")
+        return
+
+    # Layout: sidebar filters handled in main(), main content here
+    col_sessions, col_main = st.columns([1, 3])
+
+    with col_sessions:
+        st.markdown("## Sessions")
+
+        # Project filter
+        projects = sorted(set(s["project"] for s in sessions))
+        if len(projects) > 1:
+            selected_project = st.selectbox(
+                "Project",
+                ["All"] + projects,
+                key="filter_project",
+            )
+            if selected_project != "All":
+                sessions = [s for s in sessions if s["project"] == selected_project]
+
+        # Session list
+        for i, session in enumerate(sessions[:30]):
+            session_id = session["session_id"]
+            is_selected = st.session_state.get("selected_session") == session_id
+
+            label = f"{session_id[:12]}... ({session['trace_count']})"
+            if st.button(
+                label,
+                key=f"session_{i}",
+                use_container_width=True,
+                type="primary" if is_selected else "secondary",
+            ):
+                st.session_state.selected_session = session_id
+                st.rerun()
+
+    with col_main:
+        selected_session = st.session_state.get("selected_session")
+
+        if not selected_session:
+            st.markdown("### Select a session")
+            st.caption("Choose a session from the left to view its traces.")
+            return
+
+        # Get traces for selected session
+        traces = store.get_traces({"session_id": selected_session})
+        if not traces:
+            st.warning("No traces found in this session.")
+            return
+
+        # Sort by time
+        traces.sort(key=lambda x: x["created_at"])
+
+        # Session header with metrics
+        total_in = sum(t.get("input_tokens", 0) for t in traces)
+        total_out = sum(t.get("output_tokens", 0) for t in traces)
+        total_latency = sum(t.get("latency_ms", 0) for t in traces)
+        avg_latency = total_latency / len(traces) if traces else 0
+
+        st.markdown(f"### Session: `{selected_session[:16]}...`")
+
+        m1, m2, m3, m4 = st.columns(4)
+        m1.metric("Traces", len(traces))
+        m2.metric("Input Tokens", f"{total_in:,}")
+        m3.metric("Output Tokens", f"{total_out:,}")
+        m4.metric("Avg Latency", f"{avg_latency:.0f}ms")
+
+        st.markdown("---")
+
+        # Render each trace
+        for i, trace in enumerate(traces):
+            render_trace(trace, i, store)
+            st.markdown("---")
 
 
 # =============================================================================
