@@ -352,6 +352,59 @@ def truncate_text(text: str, max_len: int = 500) -> tuple[str, bool]:
     return text[:max_len], True
 
 
+def analyze_failures_stub(failures: list[dict]) -> list[dict]:
+    """Stub function for LLM-powered failure analysis.
+
+    In production, this would send the failures to an LLM for categorization.
+    For now, returns placeholder data.
+
+    Args:
+        failures: List of trace dicts with annotation data.
+
+    Returns:
+        List of category dicts with pattern analysis.
+    """
+    if not failures:
+        return []
+
+    # Placeholder categories based on notes content
+    categories = {}
+    for f in failures:
+        notes = f.get("annotation", {}).get("notes", "").lower()
+        cat = f.get("annotation", {}).get("failure_category", "") or "uncategorized"
+
+        # Simple keyword matching for demo
+        if "verbose" in notes or "long" in notes:
+            cat = "verbosity"
+        elif "miss" in notes or "incomplete" in notes:
+            cat = "incompleteness"
+        elif "hallucin" in notes or "wrong" in notes or "incorrect" in notes:
+            cat = "hallucination"
+        elif "format" in notes:
+            cat = "format_error"
+
+        if cat not in categories:
+            categories[cat] = {
+                "name": cat.replace("_", " ").title(),
+                "count": 0,
+                "examples": [],
+                "pattern": f"Traces showing {cat.replace('_', ' ')} issues",
+            }
+        categories[cat]["count"] += 1
+        if len(categories[cat]["examples"]) < 3:
+            categories[cat]["examples"].append(f["id"][:8])
+
+    # Sort by count
+    result = sorted(categories.values(), key=lambda x: -x["count"])
+
+    # Add percentages
+    total = len(failures)
+    for cat in result:
+        cat["percentage"] = (cat["count"] / total * 100) if total > 0 else 0
+
+    return result
+
+
 def render_message(role: str, content: str, max_len: int = 500) -> None:
     """Render a chat message bubble."""
     if isinstance(content, list):
@@ -688,9 +741,129 @@ def page_versions():
 # Page 3: Failure Analysis
 # =============================================================================
 def page_failures():
-    """Failure Analysis page."""
+    """Failure Analysis page - analyze and categorize failures with LLM."""
+    store = get_store()
+
     st.markdown("# Failure Analysis")
-    st.info("Page 3 implementation - see Task 3")
+    st.caption("Review failed traces and analyze patterns with LLM assistance.")
+
+    # Filters
+    col_prompt, col_days, col_analyze = st.columns([2, 1, 1])
+
+    with col_prompt:
+        all_traces = store.get_traces({})
+        prompt_names = sorted(set(t["prompt_name"] for t in all_traces))
+        selected_prompt = st.selectbox(
+            "Prompt",
+            ["All"] + prompt_names,
+            key="failure_prompt",
+        )
+
+    with col_days:
+        days = st.number_input("Days", min_value=1, max_value=365, value=30, key="failure_days")
+
+    # Get failures
+    filters = {"start_date": datetime.now() - timedelta(days=days)}
+    if selected_prompt != "All":
+        filters["prompt_name"] = selected_prompt
+
+    traces = store.get_traces(filters)
+
+    # Filter to only "bad" rated traces
+    failures = []
+    for trace in traces:
+        ann = store.get_annotation(trace["id"])
+        if ann and ann["rating"] == "bad":
+            trace["annotation"] = ann
+            failures.append(trace)
+
+    st.markdown("---")
+
+    # Summary
+    st.metric("Failures Found", len(failures))
+
+    if not failures:
+        st.success("No failures in the selected time range. Great work!")
+        return
+
+    # Failure selection
+    st.markdown("## Select Failures to Analyze")
+
+    # Initialize selection state
+    if "selected_failures" not in st.session_state:
+        st.session_state.selected_failures = set()
+
+    # Select all / none buttons
+    col_all, col_none, _ = st.columns([1, 1, 4])
+    with col_all:
+        if st.button("Select All", use_container_width=True):
+            st.session_state.selected_failures = set(f["id"] for f in failures)
+            st.rerun()
+    with col_none:
+        if st.button("Select None", use_container_width=True):
+            st.session_state.selected_failures = set()
+            st.rerun()
+
+    # Failure list with checkboxes
+    for failure in failures[:50]:  # Limit display
+        trace_id = failure["id"]
+        notes = failure["annotation"].get("notes", "No notes")[:50]
+        prompt = failure["prompt_name"]
+        version = failure["prompt_version"]
+
+        is_selected = st.checkbox(
+            f"`{trace_id[:8]}` - {notes} - {prompt} v{version}",
+            value=trace_id in st.session_state.selected_failures,
+            key=f"fail_{trace_id}",
+        )
+
+        if is_selected:
+            st.session_state.selected_failures.add(trace_id)
+        else:
+            st.session_state.selected_failures.discard(trace_id)
+
+    st.markdown("---")
+
+    # Analysis section
+    with col_analyze:
+        analyze_clicked = st.button(
+            "Analyze with LLM",
+            type="primary",
+            use_container_width=True,
+            disabled=len(st.session_state.selected_failures) == 0,
+        )
+
+    if analyze_clicked or st.session_state.get("show_analysis"):
+        st.session_state.show_analysis = True
+
+        # Get selected failures
+        selected = [f for f in failures if f["id"] in st.session_state.selected_failures]
+
+        if not selected:
+            st.warning("Select at least one failure to analyze.")
+        else:
+            st.markdown("## Analysis Results")
+            st.caption(f"Analyzing {len(selected)} failures...")
+
+            # Run stub analysis
+            categories = analyze_failures_stub(selected)
+
+            if not categories:
+                st.info("No patterns detected. Try selecting more failures.")
+            else:
+                for cat in categories:
+                    with st.expander(
+                        f"**{cat['name']}** ({cat['count']} - {cat['percentage']:.0f}%)",
+                        expanded=True,
+                    ):
+                        st.markdown(f"**Pattern:** {cat['pattern']}")
+                        st.markdown(f"**Examples:** {', '.join(cat['examples'])}")
+
+            st.markdown("---")
+            st.caption(
+                "Note: This analysis uses placeholder logic. "
+                "Connect a real LLM by implementing `analyze_failures_stub()` in dashboard_v2.py"
+            )
 
 
 # =============================================================================
