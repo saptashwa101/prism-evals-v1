@@ -2,12 +2,25 @@
 
 Run: streamlit run llm_eval/dashboard_v2.py
 Set database: LLM_EVAL_DB_PATH=path/to/db.db
+
+For SageMaker: Set SAGEMAKER_PROXY=1 environment variable
 """
 
 import os
 import sys
 from datetime import datetime, timedelta
 from pathlib import Path
+
+# Configure Streamlit for SageMaker/proxy environments BEFORE importing st
+if os.environ.get("SAGEMAKER_PROXY") or "sagemaker" in os.environ.get("JUPYTER_SERVER_URL", "").lower():
+    import streamlit.web.bootstrap as bootstrap
+    # These need to be set before streamlit initializes
+    os.environ.setdefault("STREAMLIT_SERVER_PORT", "8501")
+    os.environ.setdefault("STREAMLIT_SERVER_ADDRESS", "0.0.0.0")
+    os.environ.setdefault("STREAMLIT_SERVER_HEADLESS", "true")
+    os.environ.setdefault("STREAMLIT_SERVER_ENABLE_CORS", "false")
+    os.environ.setdefault("STREAMLIT_SERVER_ENABLE_XSRF_PROTECTION", "false")
+    os.environ.setdefault("STREAMLIT_BROWSER_GATHER_USAGE_STATS", "false")
 
 import streamlit as st
 
