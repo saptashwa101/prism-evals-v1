@@ -470,7 +470,7 @@ def render_trace(trace: dict, index: int, store: TraceStore) -> None:
 
     # System prompt (collapsed)
     if system_msgs:
-        with st.expander(f"System prompt ({len(system_msgs)})", expanded=False):
+        with st.expander("Show system prompt", expanded=False):
             for msg in system_msgs:
                 render_message("system", msg.get("content", ""), max_len=1000)
 
