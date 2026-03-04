@@ -444,25 +444,25 @@ def render_message(role: str, content: str, max_len: int = 500) -> None:
             str(c.get("text", c)) if isinstance(c, dict) else str(c) for c in content
         )
 
-    escaped = escape_html(content)
-    truncated, was_truncated = truncate_text(escaped, max_len)
-
+    truncated, was_truncated = truncate_text(content, max_len)
     role_lower = role.lower()
     msg_class = f"msg-{role_lower}" if role_lower in ["user", "assistant", "system"] else "msg-system"
 
+    # Role label
     st.markdown(
-        f"""
-        <div class="msg-bubble {msg_class}">
-            <div class="msg-role">{role.upper()}</div>
-            <div class="msg-content">{truncated}</div>
-        </div>
-        """,
+        f'<div class="msg-bubble {msg_class}"><div class="msg-role">{role.upper()}</div>',
         unsafe_allow_html=True,
     )
 
+    # Content - use st.markdown to render markdown formatting
+    st.markdown(truncated)
+
+    # Close the div
+    st.markdown('</div>', unsafe_allow_html=True)
+
     if was_truncated:
         with st.expander("Show full message"):
-            st.text(content)
+            st.markdown(content)
 
 
 def render_trace(trace: dict, index: int, store: TraceStore) -> None:
