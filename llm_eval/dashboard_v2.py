@@ -172,6 +172,25 @@ h3 {
     font-size: 0.8rem !important;
     color: var(--text-muted) !important;
 }
+[data-testid="stExpander"] summary span[data-testid="stMarkdownContainer"] p {
+    display: inline !important;
+}
+[data-testid="stExpander"] svg {
+    color: var(--text-muted) !important;
+}
+/* Hide broken material icon text */
+[data-testid="stExpander"] summary [data-testid="stIconMaterial"],
+[data-testid="stExpander"] .material-symbols-rounded {
+    font-size: 0 !important;
+    visibility: hidden !important;
+}
+[data-testid="stExpander"] summary::before {
+    content: "▶ " !important;
+    font-size: 0.7rem !important;
+}
+[data-testid="stExpander"][open] summary::before {
+    content: "▼ " !important;
+}
 
 /* Divider */
 hr { border-color: var(--border) !important; margin: 1rem 0 !important; }
