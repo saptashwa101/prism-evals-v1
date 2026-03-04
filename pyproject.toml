@@ -21,5 +21,8 @@ dev = [
     "pytest>=7.0",
 ]
 
+[project.scripts]
+llm-eval-dashboard = "llm_eval.cli:run_dashboard"
+
 [tool.hatch.build.targets.wheel]
 packages = ["llm_eval"]
